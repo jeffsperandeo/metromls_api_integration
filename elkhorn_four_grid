@@ -1,0 +1,107 @@
+<?php
+// Prevent direct access to the file
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Fetch Elkhorn MLS data with pagination and price filtering
+function jsmls_fetch_elkhorn_mls_data($page = 1, $per_page = 12, $min_price = 0) {
+    $skip = ($page - 1) * $per_page;
+
+    $url = 'https://api.example.com/reso/odata/Property?$filter=City%20eq%20%27Elkhorn%27%20and%20MlsStatus%20eq%20%27Active%27%20and%20ListPrice%20ge%20' . $min_price . '&$orderby=ListPrice%20desc&$top=' . $per_page . '&$skip=' . $skip . '&$count=true'; // Replace with your API endpoint
+
+    $response = wp_remote_get($url, array(
+        'headers' => array(
+            'Authorization' => 'Bearer YOUR_API_TOKEN', // Replace with your API token
+            'OUID'          => 'YOUR_OUID', // Replace with your OUID
+            'MLS-Aligned-User-Agent' => 'YOUR_USER_AGENT', // Replace with your user agent
+            'Accept'        => 'application/json',
+        ),
+    ));
+
+    if (is_wp_error($response)) {
+        error_log('Error fetching Elkhorn MLS data: ' . $response->get_error_message());
+        return false;
+    }
+
+    $response_body = wp_remote_retrieve_body($response);
+    $data = json_decode($response_body, true);
+
+    if (!isset($data['value']) || empty($data['value'])) {
+        error_log('No data found in Elkhorn MLS API response.');
+        return false;
+    }
+
+    return array(
+        'properties' => $data['value'],
+        'total_count' => $data['@odata.count'] ?? 0
+    );
+}
+
+// Display Elkhorn MLS listings in a four grid with pagination
+function jsmls_display_elkhorn_four_grid_shortcode($atts) {
+    $atts = shortcode_atts(array(
+        'page' => 1,
+        'per_page' => 12,
+        'min_price' => 0,
+    ), $atts);
+
+    $page = max(1, intval(get_query_var('paged') ? get_query_var('paged') : $atts['page']));
+    $per_page = intval($atts['per_page']);
+    $min_price = intval($atts['min_price']);
+
+    $result = jsmls_fetch_elkhorn_mls_data($page, $per_page, $min_price);
+
+    if ($result === false || empty($result['properties'])) {
+        return '<p>No listings found or failed to fetch data for Elkhorn. Please try again later.</p>';
+    }
+
+    $properties = $result['properties'];
+    $total_count = $result['total_count'];
+    $total_pages = ceil($total_count / $per_page);
+
+    $output = '
+    <style>
+        /* Your CSS styles here */
+    </style>
+    <div class="elkhorn-grid">';
+
+    foreach ($properties as $property) {
+        $listing_url = get_site_url() . '/property-detail?listing_key=' . urlencode($property['ListingKey']);
+        $media_url = jsmls_fetch_media($property['ListingKey']);
+        $image = $media_url ? esc_url($media_url) : 'https://via.placeholder.com/400x300';
+
+        $output .= '
+        <div class="elkhorn-card">
+            <a href="' . esc_url($listing_url) . '" style="text-decoration: none; color: inherit;">
+                <img src="' . $image . '" alt="Property Image" loading="lazy">
+                <div class="elkhorn-details">
+                    <h3>' . esc_html($property['StreetNumber'] . ' ' . $property['StreetName']) . '</h3>
+                    <p><i class="fas fa-map-marker-alt"></i> ' . esc_html($property['City']) . '</p>
+                    <p><i class="fas fa-bed"></i> ' . esc_html($property['BedroomsTotal']) . ' Beds | 
+                       <i class="fas fa-bath"></i> ' . esc_html($property['BathroomsTotalInteger']) . ' Baths | 
+                       <i class="fas fa-ruler-combined"></i> ' . esc_html($property['BuildingAreaTotal']) . ' sqft</p>
+                    <p class="elkhorn-price">$' . number_format($property['ListPrice']) . '</p>
+                </div>
+            </a>
+        </div>';
+    }
+
+    $output .= '</div>';
+
+    if ($total_pages > 1) {
+        $output .= '<div class="elkhorn-pagination">';
+        if ($page > 1) {
+            $output .= '<a href="' . esc_url(add_query_arg('paged', $page - 1)) . '">Previous</a>';
+        }
+        $output .= '<span>Page ' . $page . ' of ' . $total_pages . '</span>';
+        if ($page < $total_pages) {
+            $output .= '<a href="' . esc_url(add_query_arg('paged', $page + 1)) . '">Next</a>';
+        }
+        $output .= '</div>';
+    }
+
+    return $output;
+}
+
+add_shortcode('elkhorn_four_grid', 'jsmls_display_elkhorn_four_grid_shortcode');
